@@ -572,7 +572,7 @@ function crc32(b){ let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c = CRC[(c^b[i]
 function zip(files, usdz){ // [{name, text}]; usdz — данные каждого файла с 64-байтной границы
   const enc=new TextEncoder(), chunks=[], cd=[]; let off=0;
   const d=new Date(), dt=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate(), tm=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1);
-  for(const f of files){ const nm=enc.encode(f.name), data=enc.encode(f.text), crc=crc32(data);
+  for(const f of files){ const nm=enc.encode(f.name), data=f.bytes||enc.encode(f.text), crc=crc32(data);
     let ex=new Uint8Array(0); if(usdz){ let n=(64-((off+30+nm.length)%64))%64; if(n<4) n+=64; ex=new Uint8Array(n); ex[0]=0x39; ex[1]=0x30; ex[2]=(n-4)&255; ex[3]=(n-4)>>8; }
     const fl = usdz ? 0 : 0x0800;
     const h=new DataView(new ArrayBuffer(30)); h.setUint32(0,0x04034b50,true); h.setUint16(4,20,true); h.setUint16(6,fl,true); h.setUint16(8,0,true);
@@ -812,19 +812,30 @@ function cassQuads(quad){
 }
 
 // ---------- USDZ для встроенного AR на iPhone (AR Quick Look) ----------
-// Модель в метрах в натуральную величину. Начало координат — в плоскости потолка по центру,
-// ламели висят вниз: iPhone сам находит поверхность потолка и сажает на неё плоскость крышек.
+// Модель в метрах в натуральную величину. Встроенный AR iPhone кладёт объект на горизонтальную
+// поверхность (пол, стол), поэтому инсталляция повёрнута на 180°: крышки лежат на поверхности,
+// ламели смотрят вверх — сверху видно ровно то, что будет видно снизу на потолке.
+// Мягкое затенение у крышки (ambient occlusion) запечено в текстуру-градиент по глубине ламели.
+function aoTexture(){ // PNG 4×64: сверху светло, снизу темно; цвет фетра уже умножен
+  const cv=document.createElement('canvas'); cv.width=4; cv.height=64; const g=cv.getContext('2d'), im=g.createImageData(4,64);
+  const lin=[1,3,5].map(i=>Math.pow(parseInt(S.felt.slice(i,i+2),16)/255,2.2));
+  for(let y=0;y<64;y++){ const t=1-y/63, k=0.38+0.62*Math.pow(t,0.8);
+    for(let x=0;x<4;x++) for(let c=0;c<3;c++) im.data[(y*4+x)*4+c]=Math.round(255*Math.pow(lin[c]*k,1/2.2)); for(let x=0;x<4;x++) im.data[(y*4+x)*4+3]=255; }
+  g.putImageData(im,0,0); const b=atob(cv.toDataURL('image/png').split(',')[1]), u=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
 function makeUsdz(){
   const W=S.nx*S.cell, D=S.ny*S.cell, f=v=>(Math.round(v*1e4)/1e4).toString();
-  const mesh=()=>({pts:[],nrm:[],n:0});
+  const mesh=()=>({pts:[],nrm:[],st:[],n:0});
   const felt=mesh();
   const add=(m,a,b,c,d,n)=>{ // обход против часовой стрелки со стороны нормали
     const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2], vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
     const gx=uy*vz-uz*vy, gy=uz*vx-ux*vz, gz=ux*vy-uy*vx, q = (gx*n[0]+gy*n[1]+gz*n[2])<0 ? [a,d,c,b] : [a,b,c,d];
-    for(const p of q){ m.pts.push('('+f(p[0])+', '+f(p[1])+', '+f(p[2])+')'); m.nrm.push('('+f(n[0])+', '+f(n[1])+', '+f(n[2])+')'); } m.n++; };
-  const tf=p=>[(p[0]-W/2)/1000, p[1]/1000, (p[2]-D/2)/1000];
-  cassQuads((a,b,c,d,n)=>add(felt,tf(a),tf(b),tf(c),tf(d),n));
-  const col=h=>[1,3,5].map(i=>f(Math.pow(parseInt(h.slice(i,i+2),16)/255,2.2))).join(', ');
+    for(const p of q){ m.pts.push('('+f(p[0])+', '+f(p[1])+', '+f(p[2])+')'); m.nrm.push('('+f(n[0])+', '+f(n[1])+', '+f(n[2])+')');
+      m.st.push('(0.5, '+f(clamp(p[3]/AOD,0,1))+')'); } m.n++; };
+  const AOD=Math.max(90, Math.min(160, S.hMax*0.6));            // глубина затенения от крышки, мм
+  const tf=p=>[(p[0]-W/2)/1000, -p[1]/1000, -(p[2]-D/2)/1000, -p[1]]; // поворот на 180° вокруг X + глубина для затенения
+  const rn=n=>[n[0],-n[1],-n[2]];
+  cassQuads((a,b,c,d,n)=>add(felt,tf(a),tf(b),tf(c),tf(d),rn(n)));
   const prim=(name,m,mat)=>`    def Mesh "${name}" (
         prepend apiSchemas = ["MaterialBindingAPI"]
     )
@@ -836,20 +847,39 @@ function makeUsdz(){
             interpolation = "vertex"
         )
         point3f[] points = [${m.pts.join(', ')}]
+        texCoord2f[] primvars:st = [${m.st.join(', ')}] (
+            interpolation = "vertex"
+        )
         uniform token subdivisionScheme = "none"
         rel material:binding = </Root/Materials/${mat}>
     }
 `;
-  const mat=(name,rgb)=>`        def Material "${name}"
+  const mat=name=>`        def Material "${name}"
         {
             token outputs:surface.connect = </Root/Materials/${name}/Surface.outputs:surface>
             def Shader "Surface"
             {
                 uniform token info:id = "UsdPreviewSurface"
-                color3f inputs:diffuseColor = (${rgb})
+                color3f inputs:diffuseColor.connect = </Root/Materials/${name}/AO.outputs:rgb>
                 float inputs:roughness = 0.95
                 float inputs:metallic = 0
                 token outputs:surface
+            }
+            def Shader "UV"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+            def Shader "AO"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @ao.png@
+                float2 inputs:st.connect = </Root/Materials/${name}/UV.outputs:result>
+                token inputs:sourceColorSpace = "sRGB"
+                token inputs:wrapS = "clamp"
+                token inputs:wrapT = "clamp"
+                float3 outputs:rgb
             }
         }
 `;
@@ -865,14 +895,12 @@ function makeUsdz(){
 
 def Xform "Root"
 {
-    token preliminary:anchoring:type = "plane"
-    token preliminary:planeAnchoring:alignment = "horizontal"
 ${prim('Felt',felt,'Felt')}    def Scope "Materials"
     {
-${mat('Felt',col(S.felt))}    }
+${mat('Felt')}    }
 }
 `;
-  return zip([{name:'fetr.usda', text:usda}], true);
+  return zip([{name:'fetr.usda', text:usda},{name:'ao.png', bytes:aoTexture()}], true);
 }
 
 // ---------- 3D (собственный WebGL, без библиотек) ----------
