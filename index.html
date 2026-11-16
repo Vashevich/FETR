@@ -820,7 +820,7 @@ const GL = (()=>{
   cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); pts.set(e.pointerId,[e.clientX,e.clientY]); drag={x:e.clientX,y:e.clientY,pd:0}; cv.style.cursor='grabbing'; });
   cv.addEventListener('pointermove',e=>{ if(!pts.has(e.pointerId)) return; pts.set(e.pointerId,[e.clientX,e.clientY]);
     if(pts.size===2){ const [a,b]=[...pts.values()], d=Math.hypot(a[0]-b[0],a[1]-b[1]); if(drag.pd) cam.dist=clamp(cam.dist*drag.pd/d,300,60000); drag.pd=d; }
-    else { cam.yaw-=(e.clientX-drag.x)*0.006; cam.pitch=clamp(cam.pitch-(e.clientY-drag.y)*0.005,-1.5533,0.6); drag.x=e.clientX; drag.y=e.clientY; }
+    else { cam.yaw-=(e.clientX-drag.x)*0.006; cam.pitch=clamp(cam.pitch+(e.clientY-drag.y)*0.005,-1.5533,0.6); drag.x=e.clientX; drag.y=e.clientY; }
     api.draw(); });
   const end=e=>{ pts.delete(e.pointerId); if(drag) drag.pd=0; cv.style.cursor='grab'; };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
