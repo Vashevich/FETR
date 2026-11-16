@@ -92,13 +92,30 @@ td.m{font-family:var(--mono)}
 .steps li{margin-bottom:5px}
 .mini{display:block}
 footer{display:none}
+#arui{display:none;position:fixed;inset:0;z-index:50;background:transparent;color:#fff;font:14px var(--sans)}
+#arui.on{display:block}
+#arui.cam{background:#000}
+#arui video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#arui canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#arui .top{position:absolute;left:0;right:0;top:0;padding:calc(12px + env(safe-area-inset-top)) 14px 12px;background:linear-gradient(#000a,#0000);text-align:center;text-shadow:0 1px 3px #000;pointer-events:none}
+#arui .bot{position:absolute;left:0;right:0;bottom:0;padding:12px 10px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(#0000,#000b);display:flex;gap:8px;justify-content:center;flex-wrap:wrap;align-items:center}
+#arui .bot button{font:600 14px var(--sans);min-width:48px;min-height:44px;padding:8px 12px;border-radius:10px;border:1px solid #fff6;background:#0009;color:#fff}
+#arui .bot button.x{background:var(--acc);color:#04201c;border-color:var(--acc)}
+#arui .bot span{font:13px var(--mono);min-width:110px;text-align:center}
+#upd{display:none;font:600 12px var(--sans);border-radius:14px;border:1px solid var(--warn);background:#2a1f10;color:var(--warn);padding:5px 12px;cursor:pointer;margin-top:5px}
+#upd.on{display:inline-block}
+#armsg{display:none;position:fixed;inset:0;z-index:60;background:#000b;align-items:center;justify-content:center;padding:20px}
+#armsg.on{display:flex}
+#armsg div{background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:20px;max-width:440px;font-size:14px;line-height:1.5}
+#armsg button{margin-top:14px}
 @media (max-width:820px){
   body{overflow:auto;height:auto}
   main{flex-direction:column}
   aside{width:auto;border-right:0;border-bottom:1px solid var(--line);max-height:none}
-  section.work{min-height:90vh}
-  #v3d{min-height:60vh}
-  #gl{height:60vh}
+  section.work{min-height:0;order:-1}
+  .view{overflow:visible}
+  #v3d{min-height:56vh;overflow:hidden}
+  #gl{height:56vh}
 }
 </style>
 </head>
@@ -107,8 +124,10 @@ footer{display:none}
   <div class="brand">
     <h1>ФЕТР · параметрический потолок</h1>
     <p>Ламельные кассеты из фетра в сетку Армстронг · раскрой для ЧПУ</p>
+    <button id="upd">Вышла новая версия — обновить ↻</button>
   </div>
   <div class="stats" id="stats"></div>
+  <button class="btn" id="btnAR">AR на потолке</button>
   <button class="btn primary" id="btnZip">Файлы для ЧПУ (.zip)</button>
   <button class="btn" id="btnCsv">Спецификация .csv</button>
 </header>
@@ -138,6 +157,15 @@ footer{display:none}
     <div class="view" id="vhow"></div>
   </section>
 </main>
+<div id="arui">
+  <div class="top" id="arhint"></div>
+  <div class="bot" id="arbot">
+    <button data-ar="h-" aria-label="Потолок ниже">−</button><span id="arh"></span><button data-ar="h+" aria-label="Потолок выше">+</button>
+    <button data-ar="r-" aria-label="Повернуть влево">⟲</button><button data-ar="r+" aria-label="Повернуть вправо">⟳</button>
+    <button data-ar="exit" class="x">Выйти</button>
+  </div>
+</div>
+<div id="armsg"><div><span id="armsgt"></span><br><button class="btn primary" id="armsgok">Понятно</button></div></div>
 <script>
 "use strict";
 /* ============================================================
@@ -736,10 +764,10 @@ function renderHow(){
 
 // ---------- 3D (собственный WebGL, без библиотек) ----------
 const GL = (()=>{
-  const cv=$('#gl'); let gl=null, prog, buf={}, count=0, ok=false;
+  const cv=$('#gl'); let gl=null, prog, buf={}, count=0, arCount=0, ok=false;
   const cam={yaw:0.65, pitch:-0.5, dist:4000, tx:0, ty:0, tz:0};
   const api={fresh:false};
-  try{ gl = cv.getContext('webgl',{antialias:true}) || cv.getContext('experimental-webgl'); }catch(e){}
+  try{ gl = cv.getContext('webgl',{antialias:true, alpha:true, xrCompatible:!!navigator.xr}) || cv.getContext('webgl',{antialias:true}) || cv.getContext('experimental-webgl'); }catch(e){}
   if(gl){
     const vs=`attribute vec3 p; attribute vec3 n; attribute vec3 c; uniform mat4 m; varying vec3 vn; varying vec3 vc; varying float vy;
       void main(){ vn=n; vc=c; vy=p.y; gl_Position=m*vec4(p,1.0); }`;
@@ -765,12 +793,8 @@ const GL = (()=>{
     const quad=(a,b,c,d,n,col)=>{ tri3(a,b,c,n,col); tri3(a,c,d,n,col); };
     const felt=hex(S.felt), lidC=felt.map(v=>v*0.86), tile=[0.90,0.89,0.86], light=[1,0.985,0.9], back=[0.83,0.82,0.79];
     const gridC = S.gridColor==='white' ? [0.97,0.97,0.95] : S.gridColor==='black' ? [0.08,0.08,0.08] : felt.map(v=>v*0.8);
-    // потолок вокруг
-    const E=C*1.5; quad([-E,2,-E],[W+E,2,-E],[W+E,2,D+E],[-E,2,D+E],[0,0,0],back);
     for(const c of M.cells){ const x=c.i*C, z=c.j*C;
-      if(c.kind==='tile') quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,0,0],tile);
-      else if(c.kind==='light') quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,0,0],light);
-      else { quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,-1,0],lidC);
+      if(c.kind==='cass'){ quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,-1,0],lidC);
         const r0 = c.dir==='x'; // исходная ориентация до поворота на 180
         for(const l of c.lams){ const M2=l.hs.length-1, pts=simplify(l.hs.map((h,i)=>[G.a0+G.Lb*i/M2, h]));
           const w = r0 ? (u,v,y)=>[x+u,y,z+v] : (u,v,y)=>[x+C-v,y,z+u];
@@ -785,6 +809,12 @@ const GL = (()=>{
           quad(w(a[0],v1,0),w(a[0],v2,0),w(a[0],v2,-a[1]),w(a[0],v1,-a[1]), r0?[-1,0,0]:[0,0,-1], felt);
           quad(w(b[0],v1,0),w(b[0],v2,0),w(b[0],v2,-b[1]),w(b[0],v1,-b[1]), r0?[1,0,0]:[0,0,1], felt);
         } } }
+    arCount=P.length/3;
+    // потолок вокруг, плиты, светильники, профиль
+    const E=C*1.5; quad([-E,2,-E],[W+E,2,-E],[W+E,2,D+E],[-E,2,D+E],[0,0,0],back);
+    for(const c of M.cells){ const x=c.i*C, z=c.j*C;
+      if(c.kind==='tile') quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,0,0],tile);
+      else if(c.kind==='light') quad([x,0,z],[x+C,0,z],[x+C,0,z+C],[x,0,z+C],[0,0,0],light); }
     const f=G.flange/2, y=-1.5;
     for(let i=0;i<=S.nx;i++) quad([i*C-f,y,-f],[i*C+f,y,-f],[i*C+f,y,D+f],[i*C-f,y,D+f],[0,0,0],gridC);
     for(let j=0;j<=S.ny;j++) quad([-f,y,j*C-f],[W+f,y,j*C-f],[W+f,y,j*C+f],[-f,y,j*C+f],[0,0,0],gridC);
@@ -801,7 +831,7 @@ const GL = (()=>{
   api.resize = function(){ if(!ok) return; const r=cv.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
     const w=Math.max(2,Math.round(r.width*dpr)), h=Math.max(2,Math.round(r.height*dpr)); if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; } };
   const mul=(a,b)=>{ const o=new Float32Array(16); for(let i=0;i<4;i++) for(let j=0;j<4;j++){ let s=0; for(let k=0;k<4;k++) s+=a[k*4+j]*b[i*4+k]; o[i*4+j]=s; } return o; };
-  api.draw = function(){ if(!ok||!count) return;
+  api.draw = function(){ if(!ok||!count||api.ar) return; gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     gl.viewport(0,0,cv.width,cv.height); gl.clearColor(0.10,0.13,0.125,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     const asp=cv.width/cv.height, fov=38*Math.PI/180, f=1/Math.tan(fov/2), near=cam.dist*0.02, far=cam.dist*6;
     const dist = cam.dist * Math.max(1, 1.15/asp);
@@ -815,14 +845,18 @@ const GL = (()=>{
     gl.uniformMatrix4fv(gl.getUniformLocation(prog,'m'),false,mul(pr,vw));
     gl.uniform1f(gl.getUniformLocation(prog,'ao'), Math.max(60,S.hMax*0.55));
     gl.drawArrays(gl.TRIANGLES,0,count); };
+  // --- для AR: рисуем только кассеты с готовой матрицей ---
+  api.ok=()=>ok; api.gl=()=>gl; api.mul=mul; api.cv=cv;
+  api.drawAR = function(mvp){ gl.uniformMatrix4fv(gl.getUniformLocation(prog,'m'),false,mvp);
+    gl.uniform1f(gl.getUniformLocation(prog,'ao'), Math.max(60,S.hMax*0.55)); gl.drawArrays(gl.TRIANGLES,0,arCount); };
   // управление
   let drag=null; const pts=new Map();
-  cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); pts.set(e.pointerId,[e.clientX,e.clientY]); drag={x:e.clientX,y:e.clientY,pd:0}; cv.style.cursor='grabbing'; });
-  cv.addEventListener('pointermove',e=>{ if(!pts.has(e.pointerId)) return; pts.set(e.pointerId,[e.clientX,e.clientY]);
+  cv.addEventListener('pointerdown',e=>{ if(api.ar){ if(api.arDown) api.arDown(e); return; } cv.setPointerCapture(e.pointerId); pts.set(e.pointerId,[e.clientX,e.clientY]); drag={x:e.clientX,y:e.clientY,pd:0}; cv.style.cursor='grabbing'; });
+  cv.addEventListener('pointermove',e=>{ if(api.ar){ if(api.arMove) api.arMove(e); return; } if(!pts.has(e.pointerId)) return; pts.set(e.pointerId,[e.clientX,e.clientY]);
     if(pts.size===2){ const [a,b]=[...pts.values()], d=Math.hypot(a[0]-b[0],a[1]-b[1]); if(drag.pd) cam.dist=clamp(cam.dist*drag.pd/d,300,60000); drag.pd=d; }
     else { cam.yaw-=(e.clientX-drag.x)*0.006; cam.pitch=clamp(cam.pitch+(e.clientY-drag.y)*0.005,-1.5533,0.6); drag.x=e.clientX; drag.y=e.clientY; }
     api.draw(); });
-  const end=e=>{ pts.delete(e.pointerId); if(drag) drag.pd=0; cv.style.cursor='grab'; };
+  const end=e=>{ if(api.ar){ if(api.arUp) api.arUp(e); return; } pts.delete(e.pointerId); if(drag) drag.pd=0; cv.style.cursor='grab'; };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
   cv.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),300,60000); api.draw(); },{passive:false});
   api.cam=cam; return api;
@@ -830,9 +864,125 @@ const GL = (()=>{
 document.querySelector('.vbtns').addEventListener('click', e=>{ const c=e.target.dataset.cam; if(c){ GL.view(c); GL.draw(); } });
 window.addEventListener('resize', ()=>{ if(activeView==='v3d'){ GL.resize(); GL.draw(); } });
 
+// ---------- AR: примерка на потолке через телефон ----------
+const AR = (()=>{
+  const ui=$('#arui'), hint=$('#arhint'), st={pos:[0,0,0], yaw:0, ceil:2.7, floorY:-1.5, placed:false, mode:null};
+  try{ const c=parseFloat(localStorage.getItem('fetr-ceil')); if(c>1.8&&c<8) st.ceil=c; }catch(e){}
+  let xrOK=false; if(navigator.xr && navigator.xr.isSessionSupported) navigator.xr.isSessionSupported('immersive-ar').then(v=>{ xrOK=v; }).catch(()=>{});
+  const msg=t=>{ $('#armsgt').textContent=t; $('#armsg').classList.add('on'); };
+  $('#armsgok').addEventListener('click',()=>$('#armsg').classList.remove('on'));
+  const label=()=>{ $('#arh').textContent='потолок '+st.ceil.toFixed(2).replace('.',',')+' м'; };
+  function model(){ // мм → метры, центр инсталляции в pos, поворот вокруг вертикали
+    const s=0.001, c=Math.cos(st.yaw), n=Math.sin(st.yaw), ox=-S.nx*S.cell/2, oz=-S.ny*S.cell/2;
+    return new Float32Array([s*c,0,-s*n,0, 0,s,0,0, s*n,0,s*c,0, st.pos[0]+s*(c*ox+n*oz), st.pos[1], st.pos[2]+s*(-n*ox+c*oz), 1]); }
+  function persp(fx,fy,near,far){ return new Float32Array([fx,0,0,0, 0,fy,0,0, 0,0,(far+near)/(near-far),-1, 0,0,2*far*near/(near-far),0]); }
+  function begin(mode){ st.mode=mode; st.placed=false; GL.ar=true; GL.upload(); ui.classList.add('on'); ui.classList.toggle('cam',mode==='cam'); label(); }
+  function finish(){ GL.ar=false; st.mode=null; ui.classList.remove('on','cam'); const g=GL.gl(); g.bindFramebuffer(g.FRAMEBUFFER,null);
+    if(GL.cv.parentNode!==$('#v3d')) $('#v3d').insertBefore(GL.cv,$('#v3d').firstChild);
+    GL.fresh=false; requestAnimationFrame(()=>render(true)); }
+
+  // --- WebXR (Android Chrome): настоящая привязка к комнате ---
+  let session=null;
+  async function startXR(){
+    const g=GL.gl();
+    session = await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['local-floor','hit-test','dom-overlay'], domOverlay:{root:ui}});
+    begin('xr'); hint.textContent='Наведите телефон на потолок и коснитесь экрана — инсталляция встанет в эту точку';
+    try{ if(g.makeXRCompatible) await g.makeXRCompatible(); }catch(e){}
+    session.updateRenderState({baseLayer:new XRWebGLLayer(session,g)});
+    let ref; try{ ref=await session.requestReferenceSpace('local-floor'); st.floorY=0; }catch(e){ ref=await session.requestReferenceSpace('local'); st.floorY=-1.5; }
+    let hitSrc=null; try{ const vs=await session.requestReferenceSpace('viewer'); hitSrc=await session.requestHitTestSource({space:vs}); }catch(e){}
+    let tap=false; session.addEventListener('select',()=>{ tap=true; });
+    session.addEventListener('end',()=>{ session=null; finish(); });
+    const frame=(t,f)=>{ if(!session) return; session.requestAnimationFrame(frame);
+      const pose=f.getViewerPose(ref); if(!pose) return;
+      const layer=session.renderState.baseLayer, m=pose.transform.matrix, p=[m[12],m[13],m[14]], d=[-m[8],-m[9],-m[10]];
+      if(tap || !st.placed){
+        let done=false;
+        if(tap && hitSrc){ const hr=f.getHitTestResults(hitSrc); if(hr.length){ const hp=hr[0].getPose(ref); if(hp){ const q=hp.transform.position;
+          if(q.y > p[1]+0.3){ st.ceil=Math.round((q.y-st.floorY)*100)/100; st.pos=[q.x,q.y,q.z]; done=true; label(); } } } }
+        if(!done){ const cy=st.floorY+st.ceil;
+          if(d[1]>0.2 && cy>p[1]){ const k=(cy-p[1])/d[1]; st.pos=[p[0]+d[0]*k, cy, p[2]+d[2]*k]; }
+          else st.pos=[p[0],cy,p[2]]; }
+        st.yaw=Math.atan2(-m[2],m[0]); st.placed=true; tap=false;
+      }
+      st.pos[1]=st.floorY+st.ceil;
+      g.bindFramebuffer(g.FRAMEBUFFER,layer.framebuffer); g.clearColor(0,0,0,0); g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);
+      const mod=model();
+      for(const v of pose.views){ const vp=layer.getViewport(v); g.viewport(vp.x,vp.y,vp.width,vp.height);
+        GL.drawAR(GL.mul(GL.mul(v.projectionMatrix, v.transform.inverse.matrix), mod)); }
+    };
+    session.requestAnimationFrame(frame);
+  }
+
+  // --- камера + гироскоп (iPhone и всё остальное): привязка по повороту телефона ---
+  let stream=null, video=null, ori=null, raf=0, V=null;
+  const m3=(a,b)=>{ const o=[]; for(let i=0;i<3;i++) for(let j=0;j<3;j++) o[i*3+j]=a[i*3]*b[j]+a[i*3+1]*b[3+j]+a[i*3+2]*b[6+j]; return o; };
+  function viewRot(){ // мир (Y вверх) → камера, по углам deviceorientation
+    const r=Math.PI/180, a=(ori.alpha||0)*r, b=(ori.beta||0)*r, c=(ori.gamma||0)*r;
+    const ca=Math.cos(a),sa=Math.sin(a),cb=Math.cos(b),sb=Math.sin(b),cg=Math.cos(c),sg=Math.sin(c);
+    const R=m3(m3([ca,-sa,0, sa,ca,0, 0,0,1],[1,0,0, 0,cb,-sb, 0,sb,cb]),[cg,0,sg, 0,1,0, -sg,0,cg]);
+    const Rt=[R[0],R[3],R[6], R[1],R[4],R[7], R[2],R[5],R[8]];
+    const th=((screen.orientation&&screen.orientation.angle)||window.orientation||0)*r, ct=Math.cos(th), s2=Math.sin(th);
+    return m3(m3([ct,-s2,0, s2,ct,0, 0,0,1],Rt),[1,0,0, 0,0,-1, 0,1,0]); }
+  async function startCam(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ msg('AR-примерка работает на телефоне: откройте эту страницу на смартфоне (Chrome на Android или Safari на iPhone) и нажмите «AR на потолке».'); return; }
+    let perm='granted';
+    try{ if(window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) perm=await DeviceOrientationEvent.requestPermission(); }catch(e){ perm='denied'; }
+    try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false}); }
+    catch(e){ msg('Не удалось включить камеру. Разрешите доступ к камере для этого сайта и попробуйте ещё раз.'); return; }
+    begin('cam');
+    video=document.createElement('video'); video.setAttribute('playsinline',''); video.muted=true; video.autoplay=true; video.srcObject=stream; ui.insertBefore(video,ui.firstChild);
+    ui.insertBefore(GL.cv, video.nextSibling); try{ await video.play(); }catch(e){}
+    ori=null; window.addEventListener('deviceorientation',onOri);
+    hint.textContent='Поднимите телефон к потолку. Пальцем двигайте инсталляцию, кнопками задайте высоту потолка и поворот';
+    setTimeout(()=>{ if(st.mode==='cam' && !ori) hint.textContent='Нет данных от датчика поворота — разрешите сайту «Движение и ориентация» в настройках браузера и зайдите в AR ещё раз'; }, 3000);
+    st.pos=[0, st.floorY+st.ceil, -1.2]; st.yaw=0; st.floorY=-1.5;
+    const loop=()=>{ if(st.mode!=='cam') return; raf=requestAnimationFrame(loop); if(!ori) return;
+      const g=GL.gl(); GL.resize(); const w=GL.cv.width, h=GL.cv.height;
+      if(!st.placed){ // ставим перед собой по направлению взгляда
+        V=viewRot(); const f=[-V[6],-V[7],-V[8]], hl=Math.hypot(f[0],f[2])||1; st.pos=[f[0]/hl*1.0, 0, f[2]/hl*1.0]; st.yaw=Math.atan2(-V[2],V[0]); st.placed=true; }
+      V=viewRot(); st.pos[1]=st.floorY+st.ceil;
+      const fl=1/Math.tan(31.5*Math.PI/180), fx = h>=w ? fl*h/w : fl, fy = h>=w ? fl : fl*w/h;
+      const view=new Float32Array([V[0],V[3],V[6],0, V[1],V[4],V[7],0, V[2],V[5],V[8],0, 0,0,0,1]);
+      g.bindFramebuffer(g.FRAMEBUFFER,null); g.viewport(0,0,w,h); g.clearColor(0,0,0,0); g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);
+      GL.drawAR(GL.mul(GL.mul(persp(fx,fy,0.05,200),view),model())); };
+    loop();
+  }
+  const onOri=e=>{ if(e.alpha!==null || e.beta!==null) ori={alpha:e.alpha,beta:e.beta,gamma:e.gamma}; };
+  function stopCam(){ cancelAnimationFrame(raf); window.removeEventListener('deviceorientation',onOri);
+    if(stream) for(const t of stream.getTracks()) t.stop(); stream=null; if(video){ video.remove(); video=null; } finish(); }
+  // перетаскивание пальцем (режим камеры)
+  let last=null;
+  GL.arDown=e=>{ last=[e.clientX,e.clientY]; };
+  GL.arMove=e=>{ if(!last||st.mode!=='cam'||!V) return; const dx=e.clientX-last[0], dy=e.clientY-last[1]; last=[e.clientX,e.clientY];
+    const k=Math.max(0.5,st.ceil-1.5)*1.3/Math.max(innerWidth,innerHeight);
+    st.pos[0]+=(V[0]*dx-V[3]*dy)*k; st.pos[2]+=(V[2]*dx-V[5]*dy)*k; };
+  GL.arUp=()=>{ last=null; };
+
+  $('#arbot').addEventListener('beforexrselect',e=>e.preventDefault());
+  $('#arbot').addEventListener('click',e=>{ const a=e.target.dataset.ar; if(!a) return;
+    if(a==='h+') st.ceil=Math.min(8,st.ceil+0.05); else if(a==='h-') st.ceil=Math.max(1.8,st.ceil-0.05);
+    else if(a==='r+') st.yaw-=Math.PI/12; else if(a==='r-') st.yaw+=Math.PI/12;
+    else if(a==='exit'){ if(session) session.end(); else stopCam(); return; }
+    label(); try{ localStorage.setItem('fetr-ceil',st.ceil); }catch(e){} });
+  $('#btnAR').addEventListener('click', async ()=>{
+    if(!GL.ok()){ msg('AR недоступен: браузер не дал WebGL.'); return; }
+    if(xrOK){ try{ await startXR(); return; }catch(e){ if(session){ try{ session.end(); }catch(_){} } } }
+    startCam(); });
+  return {st};
+})();
+
 // ---------- кнопки ----------
 $('#btnZip').addEventListener('click', ()=> download(`fetr_${S.nx}x${S.ny}_cnc.zip`, makeZip()));
 $('#btnCsv').addEventListener('click', ()=> download('fetr_specification.csv', new Blob([specCsv()],{type:'text/csv;charset=utf-8'})));
+
+// ---------- проверка новой версии: сравниваем страницу на сервере с той, что открыта ----------
+(()=>{ if(!/^https?:/.test(location.protocol)) return; let base=null;
+  const get=()=>fetch(location.pathname+'?v='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.text():Promise.reject()).then(t=>t.length+':'+crc32(new TextEncoder().encode(t)));
+  const check=()=>{ if(document.hidden) return; get().then(h=>{ if(base===null) base=h; else if(h!==base) $('#upd').classList.add('on'); }).catch(()=>{}); };
+  check(); setInterval(check,120000); document.addEventListener('visibilitychange',check);
+  $('#upd').addEventListener('click',()=>location.reload());
+})();
 
 // ---------- старт ----------
 buildSide(); build(); render(true);
